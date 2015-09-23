@@ -75,17 +75,22 @@ module Sensu
       exit 0
     end
 
-    def api_request(method, path, &blk)
+    def api_request(method, path)
       if not settings.has_key?('api')
         raise "api.json settings not found."
       end
-      http = Net::HTTP.new(settings['api']['host'], settings['api']['port'])
-      req = net_http_req_class(method).new(path)
-      if settings['api']['user'] && settings['api']['password']
-        req.basic_auth(settings['api']['user'], settings['api']['password'])
+      open_timeout = settings['api'].fetch('open_timeout', nil),
+      read_timeout = settings['api'].fetch('read_timeout', 60)
+      Net::HTTP.start(settings['api']['host'], settings['api']['port'],
+                      :open_timeout => open_timeout,
+                      :read_timeout => read_timeout) do |http|
+        req = net_http_req_class(method).new(path)
+        if settings['api']['user'] && settings['api']['password']
+          req.basic_auth(settings['api']['user'], settings['api']['password'])
+        end
+        req = yield(req) if block_given?
+        http.request(req)
       end
-      yield(req) if block_given?
-      http.request(req)
     end
 
     def filter_disabled
@@ -131,10 +136,8 @@ module Sensu
       ]
       stashes.each do |(scope, path)|
         begin
-          timeout(2) do
-            if stash_exists?(path)
-              bail scope + ' alerts silenced'
-            end
+          if stash_exists?(path)
+            bail scope + ' alerts silenced'
           end
         rescue Errno::ECONNREFUSED
           puts 'connection refused attempting to query the sensu api for a stash'
@@ -153,11 +156,9 @@ module Sensu
         if @event['check']['dependencies'].is_a?(Array)
           @event['check']['dependencies'].each do |dependency|
             begin
-              timeout(2) do
-                check, client = dependency.split('/').reverse
-                if event_exists?(client || @event['client']['name'], check)
-                  bail 'check dependency event exists'
-                end
+              check, client = dependency.split('/').reverse
+              if event_exists?(client || @event['client']['name'], check)
+                bail 'check dependency event exists'
               end
             rescue Errno::ECONNREFUSED
               puts 'connection refused attempting to query the sensu api for an event'
